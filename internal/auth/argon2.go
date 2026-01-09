@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -41,15 +42,29 @@ func HashPassword(password string) (string, error) {
 // VerifyPassword verifies a password against an Argon2id hash
 func VerifyPassword(password, encodedHash string) (bool, error) {
 	// Parse the encoded hash
+	// Format: $argon2id$v=19$m=65536,t=3,p=2$salt$hash
+	parts := strings.Split(encodedHash, "$")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
+		return false, fmt.Errorf("invalid hash format: expected $argon2id$v=X$m=Y,t=Z,p=W$salt$hash")
+	}
+
 	var version int
 	var memory, iterations, parallelism uint32
-	var saltBase64, hashBase64 string
 
-	_, err := fmt.Sscanf(encodedHash, "$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
-		&version, &memory, &iterations, &parallelism, &saltBase64, &hashBase64)
+	// Parse version: v=19
+	_, err := fmt.Sscanf(parts[2], "v=%d", &version)
 	if err != nil {
-		return false, fmt.Errorf("invalid hash format: %w", err)
+		return false, fmt.Errorf("invalid version format: %w", err)
 	}
+
+	// Parse parameters: m=65536,t=3,p=2
+	_, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism)
+	if err != nil {
+		return false, fmt.Errorf("invalid parameters format: %w", err)
+	}
+
+	saltBase64 := parts[4]
+	hashBase64 := parts[5]
 
 	if version != argon2.Version {
 		return false, fmt.Errorf("incompatible version: %d", version)
@@ -67,7 +82,8 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 	}
 
 	// Compute the hash of the provided password
-	computedHash := argon2.IDKey([]byte(password), salt, iterations, memory, uint8(parallelism), uint32(len(hash)))
+	// Use keyLength constant to ensure consistency with hash generation
+	computedHash := argon2.IDKey([]byte(password), salt, iterations, memory, uint8(parallelism), keyLength)
 
 	// Compare hashes in constant time
 	return subtle.ConstantTimeCompare(hash, computedHash) == 1, nil

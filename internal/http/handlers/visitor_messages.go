@@ -6,6 +6,7 @@ import (
 
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/db"
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/models"
+	"github.com/dev-cyprium/elite-constructions-be-v2/internal/sqlc"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,13 +18,36 @@ func GetVisitorMessages(c *gin.Context) {
 		page = 1
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = db.Pool
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+	perPage := 10
+	offset := (page - 1) * perPage
+
+	messages, err := queries.ListVisitorMessages(ctx, sqlc.ListVisitorMessagesParams{
+		Limit:  int32(perPage),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	total, err := queries.CountVisitorMessages(ctx)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	messageModels := make([]models.VisitorMessage, len(messages))
+	for i, m := range messages {
+		messageModels[i] = mapSQLCVisitorMessageToModel(m)
+	}
+
 	SuccessResponse(c, http.StatusOK, models.PaginationResponse{
-		Data:    []models.VisitorMessage{},
+		Data:    messageModels,
 		Page:    page,
-		PerPage: 10,
-		Total:   0,
+		PerPage: perPage,
+		Total:   total,
 	})
 }
 
@@ -36,9 +60,16 @@ func DeleteVisitorMessage(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = id
-	_ = db.Pool
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+
+	// Check if message exists (optional, but good for error handling)
+	// We don't have a GetVisitorMessageByID query, so we'll just try to delete
+	err = queries.DeleteVisitorMessage(ctx, id)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Failed to delete visitor message")
+		return
+	}
 
 	c.Status(http.StatusNoContent)
 }

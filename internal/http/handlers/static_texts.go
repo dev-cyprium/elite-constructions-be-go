@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/db"
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/models"
+	"github.com/dev-cyprium/elite-constructions-be-v2/internal/sqlc"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 )
 
 type UpdateStaticTextRequest struct {
@@ -21,13 +24,36 @@ func GetStaticTexts(c *gin.Context) {
 		page = 1
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = db.Pool
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+	perPage := 10
+	offset := (page - 1) * perPage
+
+	staticTexts, err := queries.ListStaticTexts(ctx, sqlc.ListStaticTextsParams{
+		Limit:  int32(perPage),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	total, err := queries.CountStaticTexts(ctx)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	staticTextModels := make([]models.StaticText, len(staticTexts))
+	for i, st := range staticTexts {
+		staticTextModels[i] = mapSQLCStaticTextToModel(st)
+	}
+
 	SuccessResponse(c, http.StatusOK, models.PaginationResponse{
-		Data:    []models.StaticText{},
+		Data:    staticTextModels,
 		Page:    page,
-		PerPage: 10,
-		Total:   0,
+		PerPage: perPage,
+		Total:   total,
 	})
 }
 
@@ -40,10 +66,20 @@ func GetStaticText(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = id
-	_ = db.Pool
-	ErrorResponse(c, http.StatusNotFound, "Static text not found")
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+
+	staticText, err := queries.GetStaticTextByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ErrorResponse(c, http.StatusNotFound, "Static text not found")
+			return
+		}
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, mapSQLCStaticTextToModel(staticText))
 }
 
 // UpdateStaticText updates static text content only (key/label immutable)
@@ -61,8 +97,36 @@ func UpdateStaticText(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = id
-	_ = db.Pool
-	ErrorResponse(c, http.StatusNotFound, "Static text not found")
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+
+	// Check if static text exists
+	_, err = queries.GetStaticTextByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ErrorResponse(c, http.StatusNotFound, "Static text not found")
+			return
+		}
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	// Update content
+	err = queries.UpdateStaticTextContent(ctx, sqlc.UpdateStaticTextContentParams{
+		ID:      id,
+		Content: req.Content,
+	})
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Failed to update static text")
+		return
+	}
+
+	// Get updated static text
+	updated, err := queries.GetStaticTextByID(ctx, id)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	SuccessResponse(c, http.StatusOK, mapSQLCStaticTextToModel(updated))
 }

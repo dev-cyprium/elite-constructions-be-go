@@ -23,6 +23,7 @@ Go REST API backend for Elite Constructions built with Gin, PostgreSQL, and sqlc
 
 1. Clone the repository
 2. Copy `.env.example` to `.env` and configure:
+
    ```env
    DATABASE_URL=postgres://user:password@localhost:5432/elite_constructions?sslmode=disable
    JWT_SECRET=your-secret-key-min-32-chars-change-in-production
@@ -47,6 +48,7 @@ docker-compose -f docker-compose.prod.yaml up -d
 ### Environment Variables
 
 Set the following environment variables:
+
 - `POSTGRES_USER` (default: `elite`)
 - `POSTGRES_PASSWORD` (required)
 - `POSTGRES_DB` (default: `elite_constructions`)
@@ -65,6 +67,7 @@ go run cmd/migrate-db/main.go \
 ```
 
 Options:
+
 - `--dry-run`: Perform a dry run without making changes
 
 ### File Migration
@@ -102,7 +105,45 @@ go run cmd/migrate-files/main.go \
 
 ### Admin Endpoints (require JWT)
 
-See the plan document for complete endpoint documentation.
+**Projects:**
+
+- `GET /api/projects?page=1` - List projects (10 per page)
+- `GET /api/projects/:id` - Get project by ID
+- `POST /api/projects` - Create project (multipart: name, category, client, order, files[], highlightImageIndex)
+- `PUT /api/projects/:id` - Update project (multipart: same fields, files[] can mix IDs + new files)
+- `PUT /api/projects/:id/highlight/toggle` - Toggle highlighted boolean
+- `DELETE /api/projects/:id` - Delete project (cascade deletes images)
+
+**Testimonials:**
+
+- `GET /api/testimonials?page=1` - List testimonials (10 per page)
+- `GET /api/testimonials/:id` - Get testimonial by ID
+- `POST /api/testimonials` - Create testimonial (JSON: full_name, profession, testimonial, status)
+- `PUT /api/testimonials/:id` - Update testimonial (JSON: same fields)
+- `DELETE /api/testimonials/:id` - Delete testimonial (400 if only 1 remains)
+
+**Users:**
+
+- `GET /api/users?page=1` - List users (10 per page)
+- `GET /api/users/:id` - Get user by ID
+- `POST /api/users` - Create user (JSON: name, email, password)
+- `PUT /api/users/:id` - Update user (JSON: name, email)
+- `DELETE /api/users/:id` - Delete user (400 if only 1 remains)
+
+**Static Texts:**
+
+- `GET /api/static-texts?page=1` - List static texts (10 per page)
+- `GET /api/static-texts/:id` - Get static text by ID
+- `PUT /api/static-texts/:id` - Update static text (JSON: content)
+
+**Configurations:**
+
+- `PUT /api/configs/:key` - Update configuration (JSON: {"value": "..."})
+
+**Visitor Messages:**
+
+- `GET /api/visitor-messages?page=1` - List visitor messages (10 per page)
+- `DELETE /api/visitor-messages/:id` - Delete visitor message
 
 ## Project Structure
 
@@ -138,6 +179,14 @@ sqlc generate
 
 ```bash
 go test ./...
+```
+
+## CLI
+
+To createa new admin user, run the following command:
+
+```bash
+go run ./cmd/create-admin --name "Admin User" --email "admin@example.com" --password "securepassword"
 ```
 
 ## License

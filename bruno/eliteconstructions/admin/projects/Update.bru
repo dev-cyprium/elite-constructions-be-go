@@ -1,0 +1,30 @@
+meta {
+  name: Update
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{url}}/api/projects/:id
+  body: multipart-form
+  auth: bearer
+}
+
+params:path {
+  id: 1
+}
+
+body:multipart-form {
+  name: "Updated Project Name"
+  category: "Commercial"
+  client: "Jane Smith"
+  order: 1
+  highlightImageIndex: 0
+  files[]: 1
+  files[]: 2
+  files[]: @/path/to/new-image.jpg
+}
+
+auth:bearer {
+  token: {{token}}
+}

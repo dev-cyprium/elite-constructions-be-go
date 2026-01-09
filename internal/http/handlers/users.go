@@ -1,13 +1,17 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/auth"
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/db"
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/models"
+	"github.com/dev-cyprium/elite-constructions-be-v2/internal/sqlc"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type CreateUserRequest struct {
@@ -29,13 +33,39 @@ func GetUsers(c *gin.Context) {
 		page = 1
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = db.Pool
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+	perPage := 10
+	offset := (page - 1) * perPage
+
+	// Get users
+	users, err := queries.ListUsers(ctx, sqlc.ListUsersParams{
+		Limit:  int32(perPage),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	// Get total count
+	total, err := queries.CountUsers(ctx)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	// Map sqlc users to models
+	userModels := make([]models.User, len(users))
+	for i, u := range users {
+		userModels[i] = mapSQLCUserToModel(u)
+	}
+
 	SuccessResponse(c, http.StatusOK, models.PaginationResponse{
-		Data:    []models.User{},
+		Data:    userModels,
 		Page:    page,
-		PerPage: 10,
-		Total:   0,
+		PerPage: perPage,
+		Total:   total,
 	})
 }
 
@@ -48,10 +78,23 @@ func GetUser(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = id
-	_ = db.Pool
-	ErrorResponse(c, http.StatusNotFound, "User not found")
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+
+	user, err := queries.GetUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ErrorResponse(c, http.StatusNotFound, "User not found")
+			return
+		}
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	userModel := mapSQLCUserToModel(user)
+	// Don't return password
+	userModel.Password = ""
+	SuccessResponse(c, http.StatusOK, userModel)
 }
 
 // CreateUser creates a new user with Argon2id hashed password
@@ -69,17 +112,35 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement with sqlc queries to insert user
-	_ = db.Pool
-	_ = hashedPassword
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
 
-	user := models.User{
-		Name:  req.Name,
-		Email: req.Email,
-		Password: hashedPassword,
-		PasswordResetRequired: false,
+	// Check if user already exists
+	_, err = queries.GetUserByEmail(ctx, req.Email)
+	if err == nil {
+		ErrorResponse(c, http.StatusBadRequest, "User with this email already exists")
+		return
 	}
-	SuccessResponse(c, http.StatusCreated, user)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	// Create user
+	user, err := queries.CreateUser(ctx, sqlc.CreateUserParams{
+		Name:                  req.Name,
+		Email:                 req.Email,
+		Password:              hashedPassword,
+		PasswordResetRequired: pgtype.Bool{Bool: false, Valid: true},
+	})
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Failed to create user")
+		return
+	}
+
+	userModel := mapSQLCUserToModel(user)
+	userModel.Password = "" // Don't return password
+	SuccessResponse(c, http.StatusCreated, userModel)
 }
 
 // UpdateUser updates user name/email only (no password)
@@ -97,10 +158,41 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
-	// TODO: Implement with sqlc queries
-	_ = id
-	_ = db.Pool
-	ErrorResponse(c, http.StatusNotFound, "User not found")
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+
+	// Check if user exists
+	_, err = queries.GetUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ErrorResponse(c, http.StatusNotFound, "User not found")
+			return
+		}
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	// Update user
+	err = queries.UpdateUser(ctx, sqlc.UpdateUserParams{
+		ID:    id,
+		Name:  req.Name,
+		Email: req.Email,
+	})
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Failed to update user")
+		return
+	}
+
+	// Get updated user
+	user, err := queries.GetUserByID(ctx, id)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	userModel := mapSQLCUserToModel(user)
+	userModel.Password = "" // Don't return password
+	SuccessResponse(c, http.StatusOK, userModel)
 }
 
 // DeleteUser deletes a user (returns 400 if only 1 remains)
@@ -112,11 +204,38 @@ func DeleteUser(c *gin.Context) {
 		return
 	}
 
-	// TODO: Check count - if only 1 remains, return 400
-	// Otherwise delete and return 204
-	_ = id
-	_ = db.Pool
-	
-	// Placeholder
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+
+	// Check count - if only 1 remains, return 400
+	count, err := queries.CountUsers(ctx)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	if count <= 1 {
+		ErrorResponse(c, http.StatusBadRequest, "Cannot delete the last user")
+		return
+	}
+
+	// Check if user exists
+	_, err = queries.GetUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ErrorResponse(c, http.StatusNotFound, "User not found")
+			return
+		}
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	// Delete user
+	err = queries.DeleteUser(ctx, id)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "Failed to delete user")
+		return
+	}
+
 	c.Status(http.StatusNoContent)
 }

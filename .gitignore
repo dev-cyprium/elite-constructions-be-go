@@ -4,3 +4,5 @@
 # MacOS
 .DS_Store
 
+# Ignore storage public
+storage/public
