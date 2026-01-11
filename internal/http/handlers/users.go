@@ -21,8 +21,9 @@ type CreateUserRequest struct {
 }
 
 type UpdateUserRequest struct {
-	Name  string `json:"name" binding:"required"`
-	Email string `json:"email" binding:"required,email"`
+	Name     string `json:"name" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password,omitempty" binding:"omitempty,min=8"`
 }
 
 // GetUsers returns paginated users (10 per page)
@@ -143,7 +144,7 @@ func CreateUser(c *gin.Context) {
 	SuccessResponse(c, http.StatusCreated, userModel)
 }
 
-// UpdateUser updates user name/email only (no password)
+// UpdateUser updates user name/email and optionally password
 func UpdateUser(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -161,8 +162,8 @@ func UpdateUser(c *gin.Context) {
 	queries := sqlc.New(db.Pool)
 	ctx := c.Request.Context()
 
-	// Check if user exists
-	_, err = queries.GetUserByID(ctx, id)
+	// Get current user to preserve password if not updating
+	user, err := queries.GetUserByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			ErrorResponse(c, http.StatusNotFound, "User not found")
@@ -172,11 +173,34 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
+	// Determine password and reset fields
+	password := user.Password
+	passwordResetRequired := user.PasswordResetRequired
+	resetTokenHash := user.ResetTokenHash
+	resetTokenExpiresAt := user.ResetTokenExpiresAt
+
+	// If password is provided, hash it and clear reset fields
+	if req.Password != "" {
+		hashedPassword, err := auth.HashPassword(req.Password)
+		if err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, "Failed to hash password")
+			return
+		}
+		password = hashedPassword
+		passwordResetRequired = pgtype.Bool{Bool: false, Valid: true}
+		resetTokenHash = pgtype.Text{Valid: false}
+		resetTokenExpiresAt = pgtype.Timestamp{Valid: false}
+	}
+
 	// Update user
 	err = queries.UpdateUser(ctx, sqlc.UpdateUserParams{
-		ID:    id,
-		Name:  req.Name,
-		Email: req.Email,
+		ID:                    id,
+		Name:                  req.Name,
+		Email:                 req.Email,
+		Password:              password,
+		PasswordResetRequired: passwordResetRequired,
+		ResetTokenHash:        resetTokenHash,
+		ResetTokenExpiresAt:   resetTokenExpiresAt,
 	})
 	if err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, "Failed to update user")
@@ -184,13 +208,13 @@ func UpdateUser(c *gin.Context) {
 	}
 
 	// Get updated user
-	user, err := queries.GetUserByID(ctx, id)
+	updatedUser, err := queries.GetUserByID(ctx, id)
 	if err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, "Database error")
 		return
 	}
 
-	userModel := mapSQLCUserToModel(user)
+	userModel := mapSQLCUserToModel(updatedUser)
 	userModel.Password = "" // Don't return password
 	SuccessResponse(c, http.StatusOK, userModel)
 }

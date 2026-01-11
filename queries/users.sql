@@ -20,7 +20,13 @@ RETURNING *;
 
 -- name: UpdateUser :exec
 UPDATE users
-SET name = $2, email = $3, updated_at = NOW()
+SET name = $2, 
+    email = $3, 
+    password = $4,
+    password_reset_required = $5,
+    reset_token_hash = $6,
+    reset_token_expires_at = $7,
+    updated_at = NOW()
 WHERE id = $1;
 
 -- name: UpdateUserPassword :exec
