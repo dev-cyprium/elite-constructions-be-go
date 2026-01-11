@@ -409,6 +409,49 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// GetProjectImage returns a single project image by ID
+func GetProjectImage(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		ErrorResponse(c, http.StatusBadRequest, "Invalid project image ID")
+		return
+	}
+
+	queries := sqlc.New(db.Pool)
+	ctx := c.Request.Context()
+
+	// Get project image
+	image, err := queries.GetProjectImageByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ErrorResponse(c, http.StatusNotFound, "Project image not found")
+			return
+		}
+		ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	// Map to model
+	var blurHash *string
+	if image.BlurHash.Valid {
+		blurHash = &image.BlurHash.String
+	}
+
+	imageModel := models.ProjectImage{
+		ID:        image.ID,
+		Name:      image.Name,
+		URL:       image.Url,
+		ProjectID: image.ProjectID,
+		Order:     int(image.Order),
+		BlurHash:  blurHash,
+		CreatedAt: image.CreatedAt.Time,
+		UpdatedAt: image.UpdatedAt.Time,
+	}
+
+	SuccessResponse(c, http.StatusOK, imageModel)
+}
+
 // ToggleHighlight toggles the highlighted boolean
 func ToggleHighlight(c *gin.Context) {
 	idStr := c.Param("id")
@@ -538,8 +581,8 @@ func mapSQLCProjectToModel(p sqlc.Project) models.Project {
 		Client:      client,
 		Order:       int(p.Order),
 		Highlighted: p.Highlighted,
-		CreatedAt:    p.CreatedAt.Time,
-		UpdatedAt:    p.UpdatedAt.Time,
+		CreatedAt:   p.CreatedAt.Time,
+		UpdatedAt:   p.UpdatedAt.Time,
 	}
 }
 

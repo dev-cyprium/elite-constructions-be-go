@@ -6,20 +6,19 @@ meta {
 
 post {
   url: {{url}}/api/projects
-  body: multipart-form
+  body: multipartForm
   auth: bearer
-}
-
-body:multipart-form {
-  name: "New Project"
-  category: "Residential"
-  client: "John Doe"
-  order: 0
-  highlightImageIndex: 0
-  files[]: @/path/to/image1.jpg
-  files[]: @/path/to/image2.jpg
 }
 
 auth:bearer {
   token: {{token}}
+}
+
+body:multipart-form {
+  name: New Project
+  category: Residential
+  client: John Doe
+  order: 0
+  highlightImageIndex: 0
+  files[]: @file(/Users/stefankupresak/Desktop/Screenshot 2026-01-09 at 00.57.33.png)
 }

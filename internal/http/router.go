@@ -20,7 +20,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 
 	// Public routes (no auth)
 	router.GET("/ping", handlers.Ping)
-	
+
 	public := router.Group("/api/pub")
 	{
 		public.GET("/projects", handlers.GetPublicProjects)
@@ -39,7 +39,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	{
 		auth.POST("/login", handlers.Login(cfg))
 		auth.POST("/password-reset/complete", handlers.CompletePasswordReset(cfg))
-		
+
 		// Protected routes
 		auth.Use(middleware.AuthMiddleware(cfg))
 		{
@@ -59,6 +59,9 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		admin.PUT("/projects/:id", handlers.UpdateProject(cfg))
 		admin.PUT("/projects/:id/highlight/toggle", handlers.ToggleHighlight)
 		admin.DELETE("/projects/:id", handlers.DeleteProject(cfg))
+
+		// Project Images
+		admin.GET("/project-images/:id", handlers.GetProjectImage)
 
 		// Testimonials
 		admin.GET("/testimonials", handlers.GetTestimonials)

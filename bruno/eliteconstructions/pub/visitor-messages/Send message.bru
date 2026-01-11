@@ -1,0 +1,19 @@
+meta {
+  name: Send message
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{url}}/api/pub/visitor-messages
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "stefan@mail.com",
+    "address": "Krfska 21",
+    "description": "Imam neki problem"
+  }
+}
