@@ -7,7 +7,7 @@ services:
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-elite}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-elite_constructions}?sslmode=disable
       - JWT_SECRET=${JWT_SECRET}
-      - PORT=8080
+      - PORT=8081
       - STORAGE_PATH=/app/storage
     volumes:
       - storage_data:/app/storage/public
