@@ -508,7 +508,7 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 		sort.Ints(sortedIndices)
 
 		// Update orders: all to 0, then highlight image to 1
-		for finalPos, idx := range sortedIndices {
+		for _, idx := range sortedIndices {
 			imgID := finalOrderMap[idx]
 			img, exists := imageMap[imgID]
 			if !exists {
@@ -516,7 +516,7 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 			}
 
 			order := int32(0)
-			if highlightImageIndex >= 0 && finalPos == highlightImageIndex {
+			if highlightImageIndex >= 0 && idx == highlightImageIndex {
 				order = 1
 				// Generate blurhash for highlight image if not already set
 				if !img.BlurHash.Valid {
