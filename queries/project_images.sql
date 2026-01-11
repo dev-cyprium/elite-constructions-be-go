@@ -5,8 +5,8 @@ SELECT * FROM project_images WHERE project_id = $1 ORDER BY "order" ASC;
 SELECT * FROM project_images WHERE id = $1;
 
 -- name: CreateProjectImage :one
-INSERT INTO project_images (name, url, project_id, "order", blur_hash, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+INSERT INTO project_images (name, url, project_id, "order", blur_hash, highlighted, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
 RETURNING *;
 
 -- name: UpdateProjectImage :exec
@@ -15,8 +15,15 @@ SET name = $2,
     url = $3,
     "order" = $4,
     blur_hash = $5,
+    highlighted = $6,
     updated_at = NOW()
 WHERE id = $1;
+
+-- name: UnhighlightAllProjectImages :exec
+UPDATE project_images
+SET highlighted = false,
+    updated_at = NOW()
+WHERE project_id = $1;
 
 -- name: DeleteProjectImage :exec
 DELETE FROM project_images WHERE id = $1;

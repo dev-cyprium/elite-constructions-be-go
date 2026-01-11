@@ -188,6 +188,12 @@ func CreateProject(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
+		// Unhighlight all images if we're setting a new highlighted image
+		if highlightImageIndex >= 0 && highlightImageIndex < len(files) {
+			// Note: For new projects, there are no existing images, so this is safe
+			_ = qtx.UnhighlightAllProjectImages(ctx, project.ID)
+		}
+
 		// Save files, generate blurhash, create project_images records
 		for i, file := range files {
 			// Open file
@@ -212,7 +218,7 @@ func CreateProject(cfg *config.Config) gin.HandlerFunc {
 				return
 			}
 
-			// Generate blurhash
+			// Generate blurhash (especially important for highlighted images)
 			filePath := filepath.Join(cfg.StoragePath, "public", "img", filepath.Base(url))
 			blurHash, err := storage.GenerateBlurHash(filePath)
 			var blurHashPtr pgtype.Text
@@ -220,13 +226,17 @@ func CreateProject(cfg *config.Config) gin.HandlerFunc {
 				blurHashPtr = pgtype.Text{String: blurHash, Valid: true}
 			}
 
+			// Determine if this image should be highlighted
+			isHighlighted := highlightImageIndex >= 0 && i == highlightImageIndex
+
 			// Create project image
 			_, err = qtx.CreateProjectImage(ctx, sqlc.CreateProjectImageParams{
-				Name:      file.Filename,
-				Url:       url,
-				ProjectID: project.ID,
-				Order:     int32(i),
-				BlurHash:  blurHashPtr,
+				Name:        file.Filename,
+				Url:         url,
+				ProjectID:   project.ID,
+				Order:       int32(i),
+				BlurHash:    blurHashPtr,
+				Highlighted: isHighlighted,
 			})
 			if err != nil {
 				ErrorResponse(c, http.StatusInternalServerError, "Failed to create project image")
@@ -484,22 +494,16 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 			imageMap[img.ID] = img
 		}
 
-		// Update order for all images: set all to 0 first (like Laravel does)
-		for _, img := range allImages {
-			err = qtx.UpdateProjectImage(ctx, sqlc.UpdateProjectImageParams{
-				ID:       img.ID,
-				Name:     img.Name,
-				Url:      img.Url,
-				Order:    0,
-				BlurHash: img.BlurHash,
-			})
+		// If we're setting a new highlighted image, unhighlight all first
+		if highlightImageIndex >= 0 {
+			err = qtx.UnhighlightAllProjectImages(ctx, id)
 			if err != nil {
-				ErrorResponse(c, http.StatusInternalServerError, "Failed to update image order")
+				ErrorResponse(c, http.StatusInternalServerError, "Failed to unhighlight images")
 				return
 			}
 		}
 
-		// Now update orders based on final order and highlight
+		// Update orders and highlighted status based on final order
 		// Sort indices to process in order
 		sortedIndices := make([]int, 0, len(finalOrderMap))
 		for idx := range finalOrderMap {
@@ -507,36 +511,43 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 		}
 		sort.Ints(sortedIndices)
 
-		// Update orders: all to 0, then highlight image to 1
-		for _, idx := range sortedIndices {
+		// Update orders and highlighted flags
+		for finalPos, idx := range sortedIndices {
 			imgID := finalOrderMap[idx]
 			img, exists := imageMap[imgID]
 			if !exists {
 				continue
 			}
 
-			order := int32(0)
-			if highlightImageIndex >= 0 && idx == highlightImageIndex {
-				order = 1
-				// Generate blurhash for highlight image if not already set
-				if !img.BlurHash.Valid {
-					filePath := filepath.Join(cfg.StoragePath, "public", "img", filepath.Base(img.Url))
-					blurHash, err := storage.GenerateBlurHash(filePath)
-					if err == nil {
-						img.BlurHash = pgtype.Text{String: blurHash, Valid: true}
-					}
+			// Determine if this image should be highlighted
+			// If highlightImageIndex is provided, use it (we already unhighlighted all above)
+			// Otherwise preserve existing highlighted state
+			var isHighlighted bool
+			if highlightImageIndex >= 0 {
+				isHighlighted = idx == highlightImageIndex
+			} else {
+				isHighlighted = img.Highlighted
+			}
+
+			// Generate blurhash for highlighted image if not already set
+			if isHighlighted && !img.BlurHash.Valid {
+				filePath := filepath.Join(cfg.StoragePath, "public", "img", filepath.Base(img.Url))
+				blurHash, err := storage.GenerateBlurHash(filePath)
+				if err == nil {
+					img.BlurHash = pgtype.Text{String: blurHash, Valid: true}
 				}
 			}
 
 			err = qtx.UpdateProjectImage(ctx, sqlc.UpdateProjectImageParams{
-				ID:       img.ID,
-				Name:     img.Name,
-				Url:      img.Url,
-				Order:    order,
-				BlurHash: img.BlurHash,
+				ID:          img.ID,
+				Name:        img.Name,
+				Url:         img.Url,
+				Order:       int32(finalPos),
+				BlurHash:    img.BlurHash,
+				Highlighted: isHighlighted,
 			})
 			if err != nil {
-				ErrorResponse(c, http.StatusInternalServerError, "Failed to update image order")
+				ErrorResponse(c, http.StatusInternalServerError, "Failed to update image")
 				return
 			}
 		}
@@ -587,14 +598,15 @@ func GetProjectImage(c *gin.Context) {
 	}
 
 	imageModel := models.ProjectImage{
-		ID:        image.ID,
-		Name:      image.Name,
-		URL:       image.Url,
-		ProjectID: image.ProjectID,
-		Order:     int(image.Order),
-		BlurHash:  blurHash,
-		CreatedAt: image.CreatedAt.Time,
-		UpdatedAt: image.UpdatedAt.Time,
+		ID:          image.ID,
+		Name:        image.Name,
+		URL:         image.Url,
+		ProjectID:   image.ProjectID,
+		Order:       int(image.Order),
+		BlurHash:    blurHash,
+		Highlighted: image.Highlighted,
+		CreatedAt:   image.CreatedAt.Time,
+		UpdatedAt:   image.UpdatedAt.Time,
 	}
 
 	SuccessResponse(c, http.StatusOK, imageModel)
@@ -744,14 +756,15 @@ func mapSQLCProjectImagesToModels(images []sqlc.ProjectImage) []models.ProjectIm
 		}
 
 		result[i] = models.ProjectImage{
-			ID:        img.ID,
-			Name:      img.Name,
-			URL:       img.Url,
-			ProjectID: img.ProjectID,
-			Order:     int(img.Order),
-			BlurHash:  blurHash,
-			CreatedAt: img.CreatedAt.Time,
-			UpdatedAt: img.UpdatedAt.Time,
+			ID:          img.ID,
+			Name:        img.Name,
+			URL:         img.Url,
+			ProjectID:   img.ProjectID,
+			Order:       int(img.Order),
+			BlurHash:    blurHash,
+			Highlighted: img.Highlighted,
+			CreatedAt:   img.CreatedAt.Time,
+			UpdatedAt:   img.UpdatedAt.Time,
 		}
 	}
 	return result

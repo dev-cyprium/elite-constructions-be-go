@@ -29,14 +29,15 @@ type Project struct {
 }
 
 type ProjectImage struct {
-	ID        int64            `json:"id"`
-	Name      string           `json:"name"`
-	Url       string           `json:"url"`
-	ProjectID int64            `json:"project_id"`
-	Order     int32            `json:"order"`
-	BlurHash  pgtype.Text      `json:"blur_hash"`
-	CreatedAt pgtype.Timestamp `json:"created_at"`
-	UpdatedAt pgtype.Timestamp `json:"updated_at"`
+	ID          int64            `json:"id"`
+	Name        string           `json:"name"`
+	Url         string           `json:"url"`
+	ProjectID   int64            `json:"project_id"`
+	Order       int32            `json:"order"`
+	BlurHash    pgtype.Text      `json:"blur_hash"`
+	CreatedAt   pgtype.Timestamp `json:"created_at"`
+	UpdatedAt   pgtype.Timestamp `json:"updated_at"`
+	Highlighted bool             `json:"highlighted"`
 }
 
 type StaticText struct {

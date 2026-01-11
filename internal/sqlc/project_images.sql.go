@@ -12,17 +12,18 @@ import (
 )
 
 const createProjectImage = `-- name: CreateProjectImage :one
-INSERT INTO project_images (name, url, project_id, "order", blur_hash, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-RETURNING id, name, url, project_id, "order", blur_hash, created_at, updated_at
+INSERT INTO project_images (name, url, project_id, "order", blur_hash, highlighted, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+RETURNING id, name, url, project_id, "order", blur_hash, created_at, updated_at, highlighted
 `
 
 type CreateProjectImageParams struct {
-	Name      string      `json:"name"`
-	Url       string      `json:"url"`
-	ProjectID int64       `json:"project_id"`
-	Order     int32       `json:"order"`
-	BlurHash  pgtype.Text `json:"blur_hash"`
+	Name        string      `json:"name"`
+	Url         string      `json:"url"`
+	ProjectID   int64       `json:"project_id"`
+	Order       int32       `json:"order"`
+	BlurHash    pgtype.Text `json:"blur_hash"`
+	Highlighted bool        `json:"highlighted"`
 }
 
 func (q *Queries) CreateProjectImage(ctx context.Context, arg CreateProjectImageParams) (ProjectImage, error) {
@@ -32,6 +33,7 @@ func (q *Queries) CreateProjectImage(ctx context.Context, arg CreateProjectImage
 		arg.ProjectID,
 		arg.Order,
 		arg.BlurHash,
+		arg.Highlighted,
 	)
 	var i ProjectImage
 	err := row.Scan(
@@ -43,6 +45,7 @@ func (q *Queries) CreateProjectImage(ctx context.Context, arg CreateProjectImage
 		&i.BlurHash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Highlighted,
 	)
 	return i, err
 }
@@ -57,7 +60,7 @@ func (q *Queries) DeleteProjectImage(ctx context.Context, id int64) error {
 }
 
 const deleteProjectImagesByProjectID = `-- name: DeleteProjectImagesByProjectID :many
-SELECT id, name, url, project_id, "order", blur_hash, created_at, updated_at FROM project_images WHERE project_id = $1
+SELECT id, name, url, project_id, "order", blur_hash, created_at, updated_at, highlighted FROM project_images WHERE project_id = $1
 `
 
 func (q *Queries) DeleteProjectImagesByProjectID(ctx context.Context, projectID int64) ([]ProjectImage, error) {
@@ -78,6 +81,7 @@ func (q *Queries) DeleteProjectImagesByProjectID(ctx context.Context, projectID 
 			&i.BlurHash,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Highlighted,
 		); err != nil {
 			return nil, err
 		}
@@ -90,7 +94,7 @@ func (q *Queries) DeleteProjectImagesByProjectID(ctx context.Context, projectID 
 }
 
 const getProjectImageByID = `-- name: GetProjectImageByID :one
-SELECT id, name, url, project_id, "order", blur_hash, created_at, updated_at FROM project_images WHERE id = $1
+SELECT id, name, url, project_id, "order", blur_hash, created_at, updated_at, highlighted FROM project_images WHERE id = $1
 `
 
 func (q *Queries) GetProjectImageByID(ctx context.Context, id int64) (ProjectImage, error) {
@@ -105,6 +109,7 @@ func (q *Queries) GetProjectImageByID(ctx context.Context, id int64) (ProjectIma
 		&i.BlurHash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Highlighted,
 	)
 	return i, err
 }
@@ -134,7 +139,7 @@ func (q *Queries) ListProjectImageIDsByProjectID(ctx context.Context, projectID 
 }
 
 const listProjectImagesByProjectID = `-- name: ListProjectImagesByProjectID :many
-SELECT id, name, url, project_id, "order", blur_hash, created_at, updated_at FROM project_images WHERE project_id = $1 ORDER BY "order" ASC
+SELECT id, name, url, project_id, "order", blur_hash, created_at, updated_at, highlighted FROM project_images WHERE project_id = $1 ORDER BY "order" ASC
 `
 
 func (q *Queries) ListProjectImagesByProjectID(ctx context.Context, projectID int64) ([]ProjectImage, error) {
@@ -155,6 +160,7 @@ func (q *Queries) ListProjectImagesByProjectID(ctx context.Context, projectID in
 			&i.BlurHash,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Highlighted,
 		); err != nil {
 			return nil, err
 		}
@@ -166,22 +172,36 @@ func (q *Queries) ListProjectImagesByProjectID(ctx context.Context, projectID in
 	return items, nil
 }
 
+const unhighlightAllProjectImages = `-- name: UnhighlightAllProjectImages :exec
+UPDATE project_images
+SET highlighted = false,
+    updated_at = NOW()
+WHERE project_id = $1
+`
+
+func (q *Queries) UnhighlightAllProjectImages(ctx context.Context, projectID int64) error {
+	_, err := q.db.Exec(ctx, unhighlightAllProjectImages, projectID)
+	return err
+}
+
 const updateProjectImage = `-- name: UpdateProjectImage :exec
 UPDATE project_images
 SET name = $2,
     url = $3,
     "order" = $4,
     blur_hash = $5,
+    highlighted = $6,
     updated_at = NOW()
 WHERE id = $1
 `
 
 type UpdateProjectImageParams struct {
-	ID       int64       `json:"id"`
-	Name     string      `json:"name"`
-	Url      string      `json:"url"`
-	Order    int32       `json:"order"`
-	BlurHash pgtype.Text `json:"blur_hash"`
+	ID          int64       `json:"id"`
+	Name        string      `json:"name"`
+	Url         string      `json:"url"`
+	Order       int32       `json:"order"`
+	BlurHash    pgtype.Text `json:"blur_hash"`
+	Highlighted bool        `json:"highlighted"`
 }
 
 func (q *Queries) UpdateProjectImage(ctx context.Context, arg UpdateProjectImageParams) error {
@@ -191,6 +211,7 @@ func (q *Queries) UpdateProjectImage(ctx context.Context, arg UpdateProjectImage
 		arg.Url,
 		arg.Order,
 		arg.BlurHash,
+		arg.Highlighted,
 	)
 	return err
 }

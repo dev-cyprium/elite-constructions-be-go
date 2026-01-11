@@ -33,14 +33,15 @@ type Project struct {
 
 // ProjectImage represents an image associated with a project
 type ProjectImage struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	URL       string    `json:"url"` // /storage/img/filename.jpg
-	ProjectID int64     `json:"project_id"`
-	Order     int       `json:"order"`
-	BlurHash  *string   `json:"blur_hash,omitempty"` // data URL
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	URL        string    `json:"url"` // /storage/img/filename.jpg
+	ProjectID  int64     `json:"project_id"`
+	Order      int       `json:"order"`
+	BlurHash   *string   `json:"blur_hash,omitempty"` // data URL
+	Highlighted bool     `json:"highlighted"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // Testimonial represents a customer testimonial
