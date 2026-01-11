@@ -8,6 +8,7 @@ import (
 var allowedOrigins = []string{
 	"http://localhost:3000",
 	"https://eliteconstructions-pro.com",
+	"https://www.eliteconstructions-pro.com",
 }
 
 // CORSMiddleware handles CORS headers

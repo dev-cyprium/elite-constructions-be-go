@@ -22,6 +22,17 @@ func (q *Queries) CountProjects(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countProjectsWithSearch = `-- name: CountProjectsWithSearch :one
+SELECT COUNT(*) FROM projects WHERE ($1::text IS NULL OR $1::text = '' OR name ILIKE '%' || $1 || '%')
+`
+
+func (q *Queries) CountProjectsWithSearch(ctx context.Context, dollar_1 string) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjectsWithSearch, dollar_1)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createProject = `-- name: CreateProject :one
 INSERT INTO projects (status, name, category, client, "order", highlighted, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
@@ -136,6 +147,65 @@ type ListProjectsParams struct {
 
 func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]Project, error) {
 	rows, err := q.db.Query(ctx, listProjects, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.Name,
+			&i.Category,
+			&i.Client,
+			&i.Order,
+			&i.Highlighted,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectsWithSearch = `-- name: ListProjectsWithSearch :many
+SELECT id, status, name, category, client, "order", highlighted, created_at, updated_at FROM projects 
+WHERE ($1::text IS NULL OR $1::text = '' OR name ILIKE '%' || $1 || '%')
+ORDER BY 
+  CASE WHEN $2::text = 'order' AND $3::text = 'asc' THEN "order" ELSE NULL END ASC,
+  CASE WHEN $2::text = 'order' AND $3::text = 'desc' THEN "order" ELSE NULL END DESC,
+  CASE WHEN $2::text = 'name' AND $3::text = 'asc' THEN name ELSE NULL END ASC,
+  CASE WHEN $2::text = 'name' AND $3::text = 'desc' THEN name ELSE NULL END DESC,
+  CASE WHEN $2::text = 'created_at' AND $3::text = 'asc' THEN created_at ELSE NULL END ASC,
+  CASE WHEN $2::text = 'created_at' AND $3::text = 'desc' THEN created_at ELSE NULL END DESC,
+  CASE WHEN $2::text IS NULL OR $2::text = '' OR $2::text NOT IN ('order', 'name', 'created_at') THEN "order" ELSE NULL END ASC,
+  created_at DESC
+LIMIT $4 OFFSET $5
+`
+
+type ListProjectsWithSearchParams struct {
+	Column1 string `json:"column_1"`
+	Column2 string `json:"column_2"`
+	Column3 string `json:"column_3"`
+	Limit   int32  `json:"limit"`
+	Offset  int32  `json:"offset"`
+}
+
+func (q *Queries) ListProjectsWithSearch(ctx context.Context, arg ListProjectsWithSearchParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsWithSearch,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -21,6 +21,7 @@ import (
 )
 
 // GetProjects returns paginated projects (10 per page)
+// Supports query parameters: ?search=term&sort_by=field&sort_order=asc|desc
 func GetProjects(c *gin.Context) {
 	pageStr := c.DefaultQuery("page", "1")
 	page, err := strconv.Atoi(pageStr)
@@ -28,23 +29,39 @@ func GetProjects(c *gin.Context) {
 		page = 1
 	}
 
+	// Parse query parameters using modular helper
+	params := ParseQueryParams(c)
+	
+	// Validate sort parameters
+	allowedSortFields := []string{"order", "name", "created_at"}
+	sortBy := ValidateSortBy(params.SortBy, allowedSortFields)
+	sortOrder := ValidateSortOrder(params.SortOrder)
+
 	queries := sqlc.New(db.Pool)
 	ctx := c.Request.Context()
 	perPage := 10
 	offset := (page - 1) * perPage
 
-	// Get projects
-	projects, err := queries.ListProjects(ctx, sqlc.ListProjectsParams{
-		Limit:  int32(perPage),
-		Offset: int32(offset),
+	// Use the new query with search and sort support
+	projects, err := queries.ListProjectsWithSearch(ctx, sqlc.ListProjectsWithSearchParams{
+		Column1: params.Search,
+		Column2: sortBy,
+		Column3: sortOrder,
+		Limit:   int32(perPage),
+		Offset:  int32(offset),
 	})
 	if err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, "Database error")
 		return
 	}
 
-	// Get total count
-	total, err := queries.CountProjects(ctx)
+	// Get total count with search filter
+	var total int64
+	if params.Search != "" {
+		total, err = queries.CountProjectsWithSearch(ctx, params.Search)
+	} else {
+		total, err = queries.CountProjects(ctx)
+	}
 	if err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, "Database error")
 		return
