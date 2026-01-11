@@ -116,8 +116,7 @@ func migrateTable(mysqlDB, postgresDB *sql.DB, tableName string, dryRun bool) (i
 
 func migrateUsers(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) {
 	rows, err := mysqlDB.Query(`
-		SELECT id, name, email, email_verified_at, password, password_reset_required,
-		       reset_token_hash, reset_token_expires_at, remember_token, created_at, updated_at
+		SELECT id, name, email, email_verified_at, password, remember_token, created_at, updated_at
 		FROM users
 	`)
 	if err != nil {
@@ -154,23 +153,24 @@ func migrateUsers(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) {
 	for rows.Next() {
 		var id int64
 		var name, email string
-		var emailVerifiedAt, resetTokenExpiresAt, createdAt, updatedAt sql.NullTime
-		var password, resetTokenHash, rememberToken sql.NullString
-		var passwordResetRequired sql.NullBool
+		var emailVerifiedAtStr, password, rememberTokenStr, createdAtStr, updatedAtStr sql.NullString
 
-		err := rows.Scan(&id, &name, &email, &emailVerifiedAt, &password, &passwordResetRequired,
-			&resetTokenHash, &resetTokenExpiresAt, &rememberToken, &createdAt, &updatedAt)
+		err := rows.Scan(&id, &name, &email, &emailVerifiedAtStr, &password, &rememberTokenStr, &createdAtStr, &updatedAtStr)
 		if err != nil {
 			return count, fmt.Errorf("failed to scan row: %w", err)
 		}
+
+		// Parse timestamps
+		emailVerifiedAt := parseMySQLTime(emailVerifiedAtStr)
+		createdAt := parseMySQLTime(createdAtStr)
+		updatedAt := parseMySQLTime(updatedAtStr)
 
 		// Set password_reset_required=true and password to empty string for migration
 		newPassword := ""
 		resetRequired := true
 
-		_, err = stmt.Exec(id, name, email, nullableTime(emailVerifiedAt), newPassword, resetRequired,
-			nullableString(resetTokenHash), nullableTime(resetTokenExpiresAt),
-			nullableString(rememberToken), nullableTime(createdAt), nullableTime(updatedAt))
+		_, err = stmt.Exec(id, name, email, emailVerifiedAt, newPassword, resetRequired,
+			nil, nil, nullableString(rememberTokenStr), createdAt, updatedAt)
 		if err != nil {
 			return count, fmt.Errorf("failed to insert user %d: %w", id, err)
 		}
@@ -229,15 +229,18 @@ func migrateProjects(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) {
 		var category, client sql.NullString
 		var order int
 		var highlighted bool
-		var createdAt, updatedAt sql.NullTime
+		var createdAtStr, updatedAtStr sql.NullString
 
-		err := rows.Scan(&id, &status, &name, &category, &client, &order, &highlighted, &createdAt, &updatedAt)
+		err := rows.Scan(&id, &status, &name, &category, &client, &order, &highlighted, &createdAtStr, &updatedAtStr)
 		if err != nil {
 			return count, fmt.Errorf("failed to scan row: %w", err)
 		}
 
+		createdAt := parseMySQLTime(createdAtStr)
+		updatedAt := parseMySQLTime(updatedAtStr)
+
 		_, err = stmt.Exec(id, status, name, nullableString(category), nullableString(client),
-			order, highlighted, nullableTime(createdAt), nullableTime(updatedAt))
+			order, highlighted, createdAt, updatedAt)
 		if err != nil {
 			return count, fmt.Errorf("failed to insert project %d: %w", id, err)
 		}
@@ -294,15 +297,18 @@ func migrateProjectImages(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error)
 		var name, url string
 		var order int
 		var blurHash sql.NullString
-		var createdAt, updatedAt sql.NullTime
+		var createdAtStr, updatedAtStr sql.NullString
 
-		err := rows.Scan(&id, &name, &url, &projectID, &order, &blurHash, &createdAt, &updatedAt)
+		err := rows.Scan(&id, &name, &url, &projectID, &order, &blurHash, &createdAtStr, &updatedAtStr)
 		if err != nil {
 			return count, fmt.Errorf("failed to scan row: %w", err)
 		}
 
+		createdAt := parseMySQLTime(createdAtStr)
+		updatedAt := parseMySQLTime(updatedAtStr)
+
 		_, err = stmt.Exec(id, name, url, projectID, order, nullableString(blurHash),
-			nullableTime(createdAt), nullableTime(updatedAt))
+			createdAt, updatedAt)
 		if err != nil {
 			return count, fmt.Errorf("failed to insert project_image %d: %w", id, err)
 		}
@@ -358,15 +364,18 @@ func migrateTestimonials(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) 
 	for rows.Next() {
 		var id int64
 		var fullName, profession, testimonial, status string
-		var createdAt, updatedAt sql.NullTime
+		var createdAtStr, updatedAtStr sql.NullString
 
-		err := rows.Scan(&id, &fullName, &profession, &testimonial, &status, &createdAt, &updatedAt)
+		err := rows.Scan(&id, &fullName, &profession, &testimonial, &status, &createdAtStr, &updatedAtStr)
 		if err != nil {
 			return count, fmt.Errorf("failed to scan row: %w", err)
 		}
 
+		createdAt := parseMySQLTime(createdAtStr)
+		updatedAt := parseMySQLTime(updatedAtStr)
+
 		_, err = stmt.Exec(id, fullName, profession, testimonial, status,
-			nullableTime(createdAt), nullableTime(updatedAt))
+			createdAt, updatedAt)
 		if err != nil {
 			return count, fmt.Errorf("failed to insert testimonial %d: %w", id, err)
 		}
@@ -385,10 +394,9 @@ func migrateTestimonials(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) 
 }
 
 func migrateStaticTexts(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) {
-	rows, err := mysqlDB.Query(`
-		SELECT id, key, label, content, created_at, updated_at
-		FROM static_texts
-	`)
+	rows, err := mysqlDB.Query(
+		"SELECT id, `key`, label, content, created_at, updated_at FROM static_texts",
+	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to query MySQL static_texts: %w", err)
 	}
@@ -422,14 +430,17 @@ func migrateStaticTexts(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) {
 	for rows.Next() {
 		var id int64
 		var key, label, content string
-		var createdAt, updatedAt sql.NullTime
+		var createdAtStr, updatedAtStr sql.NullString
 
-		err := rows.Scan(&id, &key, &label, &content, &createdAt, &updatedAt)
+		err := rows.Scan(&id, &key, &label, &content, &createdAtStr, &updatedAtStr)
 		if err != nil {
 			return count, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		_, err = stmt.Exec(id, key, label, content, nullableTime(createdAt), nullableTime(updatedAt))
+		createdAt := parseMySQLTime(createdAtStr)
+		updatedAt := parseMySQLTime(updatedAtStr)
+
+		_, err = stmt.Exec(id, key, label, content, createdAt, updatedAt)
 		if err != nil {
 			return count, fmt.Errorf("failed to insert static_text %d: %w", id, err)
 		}
@@ -448,10 +459,9 @@ func migrateStaticTexts(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) {
 }
 
 func migrateConfigurations(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error) {
-	rows, err := mysqlDB.Query(`
-		SELECT id, key, value, created_at, updated_at
-		FROM configurations
-	`)
+	rows, err := mysqlDB.Query(
+		"SELECT id, `key`, value, created_at, updated_at FROM configurations",
+	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to query MySQL configurations: %w", err)
 	}
@@ -485,14 +495,17 @@ func migrateConfigurations(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, error
 	for rows.Next() {
 		var id int64
 		var key, value string
-		var createdAt, updatedAt sql.NullTime
+		var createdAtStr, updatedAtStr sql.NullString
 
-		err := rows.Scan(&id, &key, &value, &createdAt, &updatedAt)
+		err := rows.Scan(&id, &key, &value, &createdAtStr, &updatedAtStr)
 		if err != nil {
 			return count, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		_, err = stmt.Exec(id, key, value, nullableTime(createdAt), nullableTime(updatedAt))
+		createdAt := parseMySQLTime(createdAtStr)
+		updatedAt := parseMySQLTime(updatedAtStr)
+
+		_, err = stmt.Exec(id, key, value, createdAt, updatedAt)
 		if err != nil {
 			return count, fmt.Errorf("failed to insert configuration %d: %w", id, err)
 		}
@@ -549,14 +562,17 @@ func migrateVisitorMessages(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, erro
 		var id int64
 		var email, address, description string
 		var seen bool
-		var createdAt, updatedAt sql.NullTime
+		var createdAtStr, updatedAtStr sql.NullString
 
-		err := rows.Scan(&id, &email, &address, &description, &seen, &createdAt, &updatedAt)
+		err := rows.Scan(&id, &email, &address, &description, &seen, &createdAtStr, &updatedAtStr)
 		if err != nil {
 			return count, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		_, err = stmt.Exec(id, email, address, description, seen, nullableTime(createdAt), nullableTime(updatedAt))
+		createdAt := parseMySQLTime(createdAtStr)
+		updatedAt := parseMySQLTime(updatedAtStr)
+
+		_, err = stmt.Exec(id, email, address, description, seen, createdAt, updatedAt)
 		if err != nil {
 			return count, fmt.Errorf("failed to insert visitor_message %d: %w", id, err)
 		}
@@ -575,17 +591,36 @@ func migrateVisitorMessages(mysqlDB, postgresDB *sql.DB, dryRun bool) (int, erro
 }
 
 // Helper functions for nullable types
-func nullableTime(nt sql.NullTime) *time.Time {
-	if nt.Valid {
-		return &nt.Time
-	}
-	return nil
-}
-
 func nullableString(ns sql.NullString) *string {
 	if ns.Valid {
 		return &ns.String
 	}
+	return nil
+}
+
+// parseMySQLTime parses MySQL timestamp strings into *time.Time
+// MySQL returns timestamps as strings, so we need to parse them
+func parseMySQLTime(nt sql.NullString) *time.Time {
+	if !nt.Valid || nt.String == "" {
+		return nil
+	}
+	
+	// MySQL timestamp formats: "2006-01-02 15:04:05" or "2006-01-02 15:04:05.000000"
+	layouts := []string{
+		"2006-01-02 15:04:05.000000",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05Z07:00",
+		time.RFC3339,
+	}
+	
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, nt.String); err == nil {
+			return &t
+		}
+	}
+	
+	// If parsing fails, log and return nil
+	log.Printf("Warning: failed to parse MySQL timestamp: %s", nt.String)
 	return nil
 }
 
