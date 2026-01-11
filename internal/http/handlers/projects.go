@@ -6,6 +6,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 
 	"github.com/dev-cyprium/elite-constructions-be-v2/internal/config"
@@ -263,10 +265,6 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 			highlightImageIndex, _ = strconv.Atoi(highlightImageIndexStr)
 		}
 
-		// Get existing image IDs and new files
-		existingImageIDsStr := form.Value["files[]"] // Can contain IDs or be empty
-		newFiles := form.File["files[]"]
-
 		queries := sqlc.New(db.Pool)
 		ctx := c.Request.Context()
 
@@ -288,11 +286,49 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		// Parse existing image IDs from form
-		existingImageIDs := make(map[int64]bool)
-		for _, idStr := range existingImageIDsStr {
-			if imgID, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-				existingImageIDs[imgID] = true
+		// Parse form data: frontend sends files[0][id], files[1][id], etc. for existing images
+		// and files[0], files[1], etc. as multipart files for new images
+		// Build a map of index -> image ID for existing images
+		existingImageIDsMap := make(map[int]int64) // index -> imageID
+		fileIndexRegex := regexp.MustCompile(`^files\[(\d+)\]\[id\]$`)
+		for key, values := range form.Value {
+			if matches := fileIndexRegex.FindStringSubmatch(key); matches != nil {
+				if len(values) > 0 {
+					if imgID, err := strconv.ParseInt(values[0], 10, 64); err == nil {
+						index, _ := strconv.Atoi(matches[1])
+						existingImageIDsMap[index] = imgID
+					}
+				}
+			}
+		}
+
+		// Build set of existing image IDs that should be kept
+		existingImageIDsSet := make(map[int64]bool)
+		for _, imgID := range existingImageIDsMap {
+			existingImageIDsSet[imgID] = true
+		}
+
+		// Find images to delete: current images - existing images to keep
+		imagesToDelete := make([]int64, 0)
+		for _, imgID := range currentImages {
+			if !existingImageIDsSet[imgID] {
+				imagesToDelete = append(imagesToDelete, imgID)
+			}
+		}
+
+		// Parse new files from form.File
+		// Files are sent as files[0], files[1], etc.
+		newFilesMap := make(map[int]*multipart.FileHeader) // index -> file
+		fileKeyRegex := regexp.MustCompile(`^files\[(\d+)\]$`)
+		for key, files := range form.File {
+			if matches := fileKeyRegex.FindStringSubmatch(key); matches != nil {
+				if len(files) > 0 {
+					index, _ := strconv.Atoi(matches[1])
+					// Only treat as new file if this index doesn't have an existing image ID
+					if _, exists := existingImageIDsMap[index]; !exists {
+						newFilesMap[index] = files[0]
+					}
+				}
 			}
 		}
 
@@ -307,11 +343,10 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 		qtx := queries.WithTx(tx)
 
 		// Determine highlighted status
+		totalImagesAfterUpdate := len(existingImageIDsSet) + len(newFilesMap)
 		highlighted := project.Highlighted
 		if highlightImageIndex >= 0 {
-			// If highlightImageIndex is provided, it refers to the final image order
-			totalImages := len(existingImageIDs) + len(newFiles)
-			highlighted = highlightImageIndex < totalImages
+			highlighted = highlightImageIndex < totalImagesAfterUpdate
 		}
 
 		// Update project
@@ -330,24 +365,27 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// Delete removed images
-		for _, imgID := range currentImages {
-			if !existingImageIDs[imgID] {
-				// Get image to get URL for file deletion
-				img, err := qtx.GetProjectImageByID(ctx, imgID)
+		for _, imgID := range imagesToDelete {
+			// Get image to get URL for file deletion
+			img, err := qtx.GetProjectImageByID(ctx, imgID)
+			if err == nil {
+				// Delete from database
+				err = qtx.DeleteProjectImage(ctx, imgID)
 				if err == nil {
-					// Delete from database
-					err = qtx.DeleteProjectImage(ctx, imgID)
-					if err == nil {
-						// Delete file from filesystem
-						storage.DeleteFile(img.Url, cfg.StoragePath)
-					}
+					// Delete file from filesystem
+					storage.DeleteFile(img.Url, cfg.StoragePath)
 				}
 			}
 		}
 
-		// Add new files
-		nextOrder := len(existingImageIDs)
-		for _, file := range newFiles {
+		// Add new files and track their IDs by index
+		newImageIDsMap := make(map[int]int64) // index -> new image ID
+		for index := 0; index < 1000; index++ { // Iterate through indices (reasonable max)
+			file, isNewFile := newFilesMap[index]
+			if !isNewFile {
+				continue
+			}
+
 			// Open file
 			src, err := file.Open()
 			if err != nil {
@@ -378,19 +416,112 @@ func UpdateProject(cfg *config.Config) gin.HandlerFunc {
 				blurHashPtr = pgtype.Text{String: blurHash, Valid: true}
 			}
 
-			// Create project image
-			_, err = qtx.CreateProjectImage(ctx, sqlc.CreateProjectImageParams{
+			// Create project image (order will be set later)
+			newImg, err := qtx.CreateProjectImage(ctx, sqlc.CreateProjectImageParams{
 				Name:      file.Filename,
 				Url:       url,
 				ProjectID: id,
-				Order:     int32(nextOrder),
+				Order:     0, // Will be updated below
 				BlurHash:  blurHashPtr,
 			})
 			if err != nil {
 				ErrorResponse(c, http.StatusInternalServerError, "Failed to create project image")
 				return
 			}
-			nextOrder++
+			newImageIDsMap[index] = newImg.ID
+		}
+
+		// Build final ordered list based on form indices
+		// Find maximum index
+		maxIndex := -1
+		for idx := range existingImageIDsMap {
+			if idx > maxIndex {
+				maxIndex = idx
+			}
+		}
+		for idx := range newImageIDsMap {
+			if idx > maxIndex {
+				maxIndex = idx
+			}
+		}
+
+		// Build ordered list of image IDs: index -> image ID
+		finalOrderMap := make(map[int]int64) // index -> image ID
+		for idx, imgID := range existingImageIDsMap {
+			finalOrderMap[idx] = imgID
+		}
+		for idx, imgID := range newImageIDsMap {
+			finalOrderMap[idx] = imgID
+		}
+
+		// Get all images to update their orders
+		allImages, err := qtx.ListProjectImagesByProjectID(ctx, id)
+		if err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, "Database error")
+			return
+		}
+
+		// Create a map of image ID -> image for quick lookup
+		imageMap := make(map[int64]sqlc.ProjectImage)
+		for _, img := range allImages {
+			imageMap[img.ID] = img
+		}
+
+		// Update order for all images: set all to 0 first (like Laravel does)
+		for _, img := range allImages {
+			err = qtx.UpdateProjectImage(ctx, sqlc.UpdateProjectImageParams{
+				ID:       img.ID,
+				Name:     img.Name,
+				Url:      img.Url,
+				Order:    0,
+				BlurHash: img.BlurHash,
+			})
+			if err != nil {
+				ErrorResponse(c, http.StatusInternalServerError, "Failed to update image order")
+				return
+			}
+		}
+
+		// Now update orders based on final order and highlight
+		// Sort indices to process in order
+		sortedIndices := make([]int, 0, len(finalOrderMap))
+		for idx := range finalOrderMap {
+			sortedIndices = append(sortedIndices, idx)
+		}
+		sort.Ints(sortedIndices)
+
+		// Update orders: all to 0, then highlight image to 1
+		for finalPos, idx := range sortedIndices {
+			imgID := finalOrderMap[idx]
+			img, exists := imageMap[imgID]
+			if !exists {
+				continue
+			}
+
+			order := int32(0)
+			if highlightImageIndex >= 0 && finalPos == highlightImageIndex {
+				order = 1
+				// Generate blurhash for highlight image if not already set
+				if !img.BlurHash.Valid {
+					filePath := filepath.Join(cfg.StoragePath, "public", "img", filepath.Base(img.Url))
+					blurHash, err := storage.GenerateBlurHash(filePath)
+					if err == nil {
+						img.BlurHash = pgtype.Text{String: blurHash, Valid: true}
+					}
+				}
+			}
+
+			err = qtx.UpdateProjectImage(ctx, sqlc.UpdateProjectImageParams{
+				ID:       img.ID,
+				Name:     img.Name,
+				Url:      img.Url,
+				Order:    order,
+				BlurHash: img.BlurHash,
+			})
+			if err != nil {
+				ErrorResponse(c, http.StatusInternalServerError, "Failed to update image order")
+				return
+			}
 		}
 
 		// Commit transaction
