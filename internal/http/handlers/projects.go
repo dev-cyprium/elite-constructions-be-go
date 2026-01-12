@@ -153,8 +153,39 @@ func CreateProject(cfg *config.Config) gin.HandlerFunc {
 			highlightImageIndex, _ = strconv.Atoi(highlightImageIndexStr)
 		}
 
-		// Get uploaded files
-		files := form.File["files[]"]
+		// Get uploaded files - support both files[] and files[0], files[1], etc.
+		var files []*multipart.FileHeader
+		
+		// First, try files[] format (backward compatibility)
+		if filesArray, ok := form.File["files[]"]; ok {
+			files = filesArray
+		} else {
+			// Try files[0], files[1], etc. format
+			fileKeyRegex := regexp.MustCompile(`^files\[(\d+)\]$`)
+			filesMap := make(map[int]*multipart.FileHeader)
+			for key, fileHeaders := range form.File {
+				if matches := fileKeyRegex.FindStringSubmatch(key); matches != nil {
+					if len(fileHeaders) > 0 {
+						index, _ := strconv.Atoi(matches[1])
+						filesMap[index] = fileHeaders[0]
+					}
+				}
+			}
+			
+			// Convert map to sorted slice
+			if len(filesMap) > 0 {
+				indices := make([]int, 0, len(filesMap))
+				for idx := range filesMap {
+					indices = append(indices, idx)
+				}
+				sort.Ints(indices)
+				files = make([]*multipart.FileHeader, len(indices))
+				for i, idx := range indices {
+					files[i] = filesMap[idx]
+				}
+			}
+		}
+		
 		if len(files) == 0 {
 			ErrorResponse(c, http.StatusBadRequest, "At least one file is required")
 			return
